@@ -8,7 +8,7 @@ from transformers.trainer_pt_utils import get_parameter_names
 from transformers.utils.versions import require_version
 
 from ..extras.logging import get_logger
-from ..extras.packages import is_galore_available
+from ..extras.packages import is_galore_available, is_sophia_available
 from ..hparams import FinetuningArguments, ModelArguments
 from ..model import find_all_linear_modules, load_model, load_tokenizer, load_valuehead_params
 
@@ -16,6 +16,8 @@ from ..model import find_all_linear_modules, load_model, load_tokenizer, load_va
 if is_galore_available():
     from galore_torch import GaLoreAdafactor, GaLoreAdamW, GaLoreAdamW8bit
 
+if is_sophia_available():
+    from sophia import SophiaG
 
 if TYPE_CHECKING:
     from transformers import Seq2SeqTrainingArguments
@@ -249,6 +251,19 @@ def _create_galore_optimizer(
     return optimizer
 
 
+def _create_sophia_optimizer(
+    model: "PreTrainedModel",
+    training_args: "Seq2SeqTrainingArguments",
+    finetuning_args: "FinetuningArguments",
+) -> "torch.optim.Optimizer":
+    require_version("sophia", "To fix: pip install Sophia-Optimizer")
+    
+    optimizer = SophiaG(model.parameters(), lr=training_args.learning_rate, betas=(finetuning_args.sophia_beta1, finetuning_args.sophia_beta2), rho = finetuning_args.sophia_rho, weight_decay=training_args.weight_decay)
+
+    logger.info("Using Sophia optimizer.")
+    return optimizer
+
+
 def _create_loraplus_optimizer(
     model: "PreTrainedModel",
     training_args: "Seq2SeqTrainingArguments",
@@ -298,6 +313,9 @@ def create_custom_optimzer(
 ) -> Optional["torch.optim.Optimizer"]:
     if finetuning_args.use_galore:
         return _create_galore_optimizer(model, training_args, finetuning_args)
+
+    if finetuning_args.use_sophia:
+        return _create_sophia_optimizer(model, training_args, finetuning_args)
 
     if finetuning_args.loraplus_lr_ratio is not None:
         return _create_loraplus_optimizer(model, training_args, finetuning_args)
