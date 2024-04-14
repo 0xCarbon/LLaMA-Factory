@@ -89,6 +89,26 @@ class DataArguments:
         metadata={"help": "Path to save or load the tokenized datasets."},
     )
 
+    should_shuffle: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to shuffle the dataset after import. Uses shuffle_seed param."},
+    )
+
+    shuffle_seed: int = field(
+        default=42,
+        metadata={"help": "Random seed for the shuffle operation."},
+    )
+
+    save_train_test_split: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to save the train and test splits."},
+    )
+
+    train_test_dir: str = field(
+        default="train_test_split",
+        metadata={"help": "Path to the folder containing the train and test splits."},
+    )
+
     def __post_init__(self):
         if self.reserved_label_len >= self.cutoff_len:
             raise ValueError("`reserved_label_len` must be smaller than `cutoff_len`.")

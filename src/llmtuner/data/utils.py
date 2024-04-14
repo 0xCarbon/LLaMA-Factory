@@ -85,6 +85,10 @@ def split_dataset(
             else:
                 val_size = int(data_args.val_size) if data_args.val_size > 1 else data_args.val_size
                 dataset = dataset.train_test_split(test_size=val_size, seed=training_args.seed)
+
+                if data_args.save_train_test_split:
+                    dataset.save_to_disk(data_args.train_test_dir)
+
                 return {"train_dataset": dataset["train"], "eval_dataset": dataset["test"]}
         else:
             if data_args.streaming:
