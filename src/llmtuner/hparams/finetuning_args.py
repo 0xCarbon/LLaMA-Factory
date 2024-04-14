@@ -189,15 +189,15 @@ class GaloreArguments:
         default=200,
         metadata={"help": "Number of steps to update the GaLore projection."},
     )
-    sophia_scale: float = field(
+    galore_scale: float = field(
         default=0.25,
         metadata={"help": "sophia scaling coefficient."},
     )
-    sophia_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = field(
+    galore_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = field(
         default="std",
         metadata={"help": "Type of sophia projection."},
     )
-    sophia_layerwise: bool = field(
+    galore_layerwise: bool = field(
         default=False,
         metadata={"help": "Whether or not to enable layer-wise update to further save memory."},
     )
