@@ -176,4 +176,7 @@ def get_dataset(
             except StopIteration:
                 raise RuntimeError("Cannot find valid samples, check `data/README.md` for the data format.")
 
+        if data_args.should_shuffle:
+            dataset = dataset.shuffle(seed=data_args.shuffle_seed)
+
         return dataset
