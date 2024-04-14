@@ -24,6 +24,8 @@ def is_flash_attn2_available():
 def is_galore_available():
     return _is_package_available("galore_torch")
 
+def is_sophia_available():
+    return _is_package_available("sophia")
 
 def is_jieba_available():
     return _is_package_available("jieba")

@@ -202,9 +202,62 @@ class GaloreArguments:
         metadata={"help": "Whether or not to enable layer-wise update to further save memory."},
     )
 
+@dataclass
+class SophiaArguments:
+    r"""
+    Arguments pertaining to the Sophia algorithm.
+    """
+
+    use_sophia: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to use Sophia optimizer."},
+    )
+
+    sophia_rho: float = field(
+        default=0.01,
+        metadata={"help": "The rho parameter in Sophia optimizer algorithm."},
+    )
+
+    sophia_beta1: float = field(
+        default=0.965,
+        metadata={"help": "The beta1 parameter in Sophia optimizer algorithm."},
+    )
+
+    sophia_beta2: float = field(
+        default=0.99,
+        metadata={"help": "The beta2 parameter in Sophia optimizer algorithm."},
+    )
+
+    # sophia_target: str = field(
+    #     default="all",
+    #     metadata={
+    #         "help": """Name(s) of modules to apply sophia. Use commas to separate multiple modules. \
+    #                 Use "all" to specify all the linear modules."""
+    #     },
+    # )
+    # sophia_rank: int = field(
+    #     default=16,
+    #     metadata={"help": "The rank of sophia gradients."},
+    # )
+    # sophia_update_interval: int = field(
+    #     default=200,
+    #     metadata={"help": "Number of steps to update the sophia projection."},
+    # )
+    # sophia_scale: float = field(
+    #     default=0.25,
+    #     metadata={"help": "sophia scaling coefficient."},
+    # )
+    # sophia_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = field(
+    #     default="std",
+    #     metadata={"help": "Type of sophia projection."},
+    # )
+    # sophia_layerwise: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether or not to enable layer-wise update to further save memory."},
+    # )
 
 @dataclass
-class FinetuningArguments(FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments):
+class FinetuningArguments(FreezeArguments, LoraArguments, RLHFArguments, GaloreArguments,SophiaArguments):
     r"""
     Arguments pertaining to which techniques we are going to fine-tuning with.
     """
