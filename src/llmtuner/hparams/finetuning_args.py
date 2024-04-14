@@ -191,11 +191,11 @@ class GaloreArguments:
     )
     galore_scale: float = field(
         default=0.25,
-        metadata={"help": "sophia scaling coefficient."},
+        metadata={"help": "GaLore scaling coefficient."},
     )
     galore_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = field(
         default="std",
-        metadata={"help": "Type of sophia projection."},
+        metadata={"help": "Type of GaLore projection."},
     )
     galore_layerwise: bool = field(
         default=False,
