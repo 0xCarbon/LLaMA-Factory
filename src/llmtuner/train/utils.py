@@ -256,7 +256,7 @@ def _create_sophia_optimizer(
     training_args: "Seq2SeqTrainingArguments",
     finetuning_args: "FinetuningArguments",
 ) -> "torch.optim.Optimizer":
-    require_version("sophia", "To fix: pip install Sophia-Optimizer")
+    require_version("Sophia_Optimizer", "To fix install Sophia from 0xCarbon repo.")
     
     optimizer = SophiaG(model.parameters(), lr=training_args.learning_rate, betas=(finetuning_args.sophia_beta1, finetuning_args.sophia_beta2), rho = finetuning_args.sophia_rho, weight_decay=training_args.weight_decay)
 
