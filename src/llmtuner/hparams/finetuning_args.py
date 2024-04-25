@@ -162,7 +162,10 @@ class RLHFArguments:
         default="lora",
         metadata={"help": "The type of the reward model in PPO training. Lora model only supports lora training."},
     )
-
+    distill_teacher_mixin: float = field(
+        default=0.5,
+        metadata={"help": "Teacher mix-in parameter for loss calculation in distillation."},
+    )
 
 @dataclass
 class GaloreArguments:
@@ -266,7 +269,7 @@ class FinetuningArguments(FreezeArguments, LoraArguments, RLHFArguments, GaloreA
         default=False,
         metadata={"help": "Whether or not to train model in purely bf16 precision (without AMP)."},
     )
-    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "orpo"] = field(
+    stage: Literal["pt", "sft", "rm", "ppo", "dpo", "orpo", "distill"] = field(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
