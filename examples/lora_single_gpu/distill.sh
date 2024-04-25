@@ -1,0 +1,38 @@
+#!/bin/bash
+
+CUDA_VISIBLE_DEVICES=0 python ../../src/train_bash.py \
+    --stage distill \
+    --do_train \
+    --model_name_or_path meta-llama/Llama-2-7b-hf \
+    --ref_model meta-llama/Llama-2-13b-hf \
+    --ref_model_quantization_bit 8 \
+    --distill_teacher_mixin 0.5 \
+    --dataset dataset_distill \
+    --dataset_dir ../../data \
+    --template pretrain \
+    --tokenized_path ../../tokenized_data \
+    --should_shuffle \
+    --save_train_test_split \
+    --train_test_dir ../../train_test_split \
+    --finetuning_type full \
+    --output_dir ../../saves/LLaMA2-7B/distill \
+    --flash_attn \
+    --overwrite_cache \
+    --overwrite_output_dir \
+    --cutoff_len 1024 \
+    --preprocessing_num_workers 16 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 8 \
+    --lr_scheduler_type cosine \
+    --logging_steps 10 \
+    --warmup_steps 20 \
+    --save_steps 100 \
+    --eval_steps 100 \
+    --evaluation_strategy steps \
+    --load_best_model_at_end \
+    --learning_rate 1e-5 \
+    --num_train_epochs 1.0 \
+    --val_size 0.1 \
+    --plot_loss \
+    --bf16
