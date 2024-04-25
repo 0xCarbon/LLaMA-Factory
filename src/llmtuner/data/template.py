@@ -715,6 +715,11 @@ _register_template(
     efficient_eos=True,
 )
 
+_register_template(
+    name="pretrain",
+    efficient_eos=True,
+)
+
 
 _register_template(
     name="vicuna",
