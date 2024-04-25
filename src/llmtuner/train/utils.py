@@ -90,7 +90,7 @@ def create_ref_model(
             )
         )
         ref_model_args = ModelArguments(**ref_model_args_dict)
-        ref_finetuning_args = FinetuningArguments(finetuning_type="lora")
+        ref_finetuning_args = FinetuningArguments(finetuning_type="full") #was lora (why ???)
         tokenizer = load_tokenizer(ref_model_args)
         ref_model = load_model(
             tokenizer, ref_model_args, ref_finetuning_args, is_trainable=False, add_valuehead=add_valuehead
