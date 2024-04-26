@@ -18,6 +18,10 @@ from ...extras.logging import get_logger
 
 from torch import nn
 
+from copy import deepcopy
+from trl.models import PreTrainedModelWrapper
+import deepspeed
+
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
     from transformers.trainer import PredictionOutput
@@ -28,27 +32,44 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 class DistillationLoss(nn.Module):
-    # def __init__(self, temperature=1.0, alpha=0.5):
-    #     self.temperature = temperature
     def __init__(self, alpha=0.5):
+        """
+        Initializes the DistillationLoss module.
+        :param temperature: Temperature for softmax scaling, making the teacher's distribution softer.
+        :param alpha: Weighting factor for balancing the soft and hard loss components.
+        """
+         
+        super().__init__()
         self.alpha = alpha
         self.soft_loss = nn.KLDivLoss(reduction='batchmean')
         self.hard_loss = nn.CrossEntropyLoss()
+        self.temperature = 1 #Adjust this later
 
     def forward(self, model_logits, ref_logits, labels):
-        # Soft loss
-        # model_log_probs = nn.functional.log_softmax(model_logits / self.temperature, dim=-1)
-        # ref_probs = nn.functional.softmax(ref_logits / self.temperature, dim=-1)
-        model_log_probs = nn.functional.log_softmax(model_logits, dim=-1)
-        ref_probs = nn.functional.softmax(ref_logits, dim=-1)
-        soft_loss = self.soft_loss(model_log_probs, ref_probs)
+        """
+        Forward pass for the distillation loss computation.
+        :param student_logits: Logits from the student model.
+        :param teacher_logits: Logits from the teacher model.
+        :param labels: Ground truth labels.
+        :return: Combined distillation loss.
+        """
+        # Calculate soft logits with temperature scaling
+        soft_logits = nn.functional.log_softmax(model_logits / self.temperature, dim=1)
+        with torch.no_grad():
+            soft_targets = nn.functional.softmax(ref_logits / self.temperature, dim=1)
+        
+        # Calculate the soft loss (KL divergence loss)
+        soft_loss = self.soft_loss(soft_logits, soft_targets) * (self.alpha * self.temperature ** 2)
+        
+        print("Model_logits dimension: ",model_logits.dim())
+        print("labels dimension: ",model_logits.dim())
+        print("labels content:\n",labels)
 
-        # Hard loss
-        hard_loss = self.hard_loss(model_logits, labels)
+        # Calculate the hard loss (cross entropy loss)
+        hard_loss = self.hard_loss(model_logits, labels) * (1.0 - self.alpha) #labels RuntimeError: Expected target size [1, 32000], got [1, 296]
 
-        # Combine soft and hard losses
-        combined_loss = self.alpha * soft_loss + (1 - self.alpha) * hard_loss
-        return combined_loss
+        # Return the total loss as a weighted sum of the soft and hard losses
+        return soft_loss + hard_loss
 
 class CustomDistillTrainer(Seq2SeqTrainer):
     def __init__(
@@ -62,6 +83,19 @@ class CustomDistillTrainer(Seq2SeqTrainer):
         self.finetuning_args = finetuning_args
         self.ref_model = ref_model
 
+        self.reference_free = False
+        self.use_dpo_data_collator = False  # hack to avoid warning
+        self.generate_during_eval = False  # disable at evaluation
+        self.label_pad_token_id = IGNORE_INDEX
+        self.padding_value = 0
+        self.is_encoder_decoder = model.config.is_encoder_decoder
+        self.precompute_ref_log_probs = False
+        self._precomputed_train_ref_log_probs = False
+        self._precomputed_eval_ref_log_probs = False
+        self._peft_has_been_casted_to_bf16 = False
+
+        self._stored_metrics = defaultdict(lambda: defaultdict(list))
+
         Trainer.__init__(self, model=model, **kwargs)
         if not hasattr(self, "accelerator"):
             raise AttributeError("Please update `transformers`.")
@@ -74,6 +108,37 @@ class CustomDistillTrainer(Seq2SeqTrainer):
                     self.ref_model = self._prepare_deepspeed(self.ref_model)
             else:
                 self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
+
+    def _prepare_deepspeed(self, model: PreTrainedModelWrapper):
+        # Adapted from accelerate: https://github.com/huggingface/accelerate/blob/739b135f8367becb67ffaada12fe76e3aa60fefd/src/accelerate/accelerator.py#L1473
+        deepspeed_plugin = self.accelerator.state.deepspeed_plugin
+        config_kwargs = deepcopy(deepspeed_plugin.deepspeed_config)
+
+        if model is not None:
+            if hasattr(model, "config"):
+                hidden_size = (
+                    max(model.config.hidden_sizes)
+                    if getattr(model.config, "hidden_sizes", None)
+                    else getattr(model.config, "hidden_size", None)
+                )
+                if hidden_size is not None and config_kwargs["zero_optimization"]["stage"] == 3:
+                    # Note that `stage3_prefetch_bucket_size` can produce DeepSpeed messages like: `Invalidate trace cache @ step 0: expected module 1, but got module 0`
+                    # This is expected and is not an error, see: https://github.com/microsoft/DeepSpeed/discussions/4081
+                    config_kwargs.update(
+                        {
+                            "zero_optimization.reduce_bucket_size": hidden_size * hidden_size,
+                            "zero_optimization.stage3_param_persistence_threshold": 10 * hidden_size,
+                            "zero_optimization.stage3_prefetch_bucket_size": 0.9 * hidden_size * hidden_size,
+                        }
+                    )
+
+        # If ZeRO-3 is used, we shard both the active and reference model.
+        # Otherwise, we assume the reference model fits in memory and is initialized on each device with ZeRO disabled (stage 0)
+        if config_kwargs["zero_optimization"]["stage"] != 3:
+            config_kwargs["zero_optimization"]["stage"] = 0
+        model, *_ = deepspeed.initialize(model=model, config=config_kwargs) #If an optimizer is specified in the deepspeed_config this won't work (largest numel = max([sum([p.ds_numel for p in psg]) for psg in self.fp16 partitioned groups]))
+        model.eval()
+        return model
 
     def create_optimizer(self) -> "torch.optim.Optimizer":
         if self.optimizer is None:
@@ -164,17 +229,30 @@ class CustomDistillTrainer(Seq2SeqTrainer):
             writer.write("\n".join(res))
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        if self.label_smoother is not None and "labels" in inputs:
-            labels = inputs.pop("labels")
-        else:
-            labels = None
+        # if self.label_smoother is not None and "labels" in inputs:
+        #     labels = inputs.pop("labels")
+        # else:
+        #     labels = None
 
-        model_outputs = model(**inputs) #where are the generation temperature?
-        model_logits = model_outputs.logits
+        labels = inputs.pop("labels")
+
+
+        model_outputs: "torch.Tensor" = model(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            return_dict=True,
+            use_cache=False,
+        )
+
+        model_logits = model_outputs.logits.to(torch.float32)
 
         with torch.no_grad():
-            ref_outputs = self.ref_model(**inputs)
-            ref_logits = ref_outputs.logits
+            ref_logits: "torch.Tensor" = self.ref_model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                return_dict=True,
+                use_cache=False,
+            ).logits.to(torch.float32)
 
         loss_fn = DistillationLoss(self.finetuning_args.distill_teacher_mixin) 
         loss = loss_fn(model_logits, ref_logits, labels)

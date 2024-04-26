@@ -6,6 +6,7 @@ from transformers import DataCollatorForSeq2Seq
 
 from ...data import get_dataset, split_dataset
 from ...extras.constants import IGNORE_INDEX
+from ...extras.misc import get_logits_processor
 from ...extras.ploting import plot_loss
 from ...hparams import ModelArguments
 from ...model import load_model, load_tokenizer
@@ -17,7 +18,7 @@ from .metric import ComputeMetrics
 if TYPE_CHECKING:
     from transformers import Seq2SeqTrainingArguments, TrainerCallback
 
-    from ...hparams import DataArguments, FinetuningArguments
+    from ...hparams import DataArguments, FinetuningArguments, GeneratingArguments, ModelArguments
 
 
 def run_distill(
@@ -25,6 +26,7 @@ def run_distill(
     data_args: "DataArguments",
     training_args: "Seq2SeqTrainingArguments",
     finetuning_args: "FinetuningArguments",
+    generating_args: "GeneratingArguments",
     callbacks: Optional[List["TrainerCallback"]] = None,
 ):
     tokenizer = load_tokenizer(model_args)
@@ -63,6 +65,12 @@ def run_distill(
         **split_dataset(dataset, data_args, training_args),
     )
 
+     # Keyword arguments for `model.generate`
+    gen_kwargs = generating_args.to_dict()
+    gen_kwargs["eos_token_id"] = [tokenizer.eos_token_id] + tokenizer.additional_special_tokens_ids
+    gen_kwargs["pad_token_id"] = tokenizer.pad_token_id
+    gen_kwargs["logits_processor"] = get_logits_processor()
+
     # Training
     if training_args.do_train:
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
@@ -71,17 +79,24 @@ def run_distill(
         trainer.save_metrics("train", train_result.metrics)
         trainer.save_state()
         if trainer.is_world_process_zero() and finetuning_args.plot_loss:
-            plot_loss(training_args.output_dir, keys=["loss", "eval_loss", "rewards/accuracies"])
+            plot_loss(training_args.output_dir, keys=["loss", "eval_loss"])
 
     # Evaluation
     if training_args.do_eval:
-        metrics = trainer.evaluate(metric_key_prefix="eval")
-        if id(model) == id(ref_model):  # unable to compute rewards without a reference model
-            remove_keys = [key for key in metrics.keys() if "rewards" in key]
-            for key in remove_keys:
-                metrics.pop(key)
+        metrics = trainer.evaluate(metric_key_prefix="eval", **gen_kwargs)
+        if training_args.predict_with_generate:  # eval_loss will be wrong if predict_with_generate is enabled
+            metrics.pop("eval_loss", None)
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
+
+    # Predict
+    if training_args.do_predict:
+        predict_results = trainer.predict(dataset, metric_key_prefix="predict", **gen_kwargs)
+        if training_args.predict_with_generate:  # predict_loss will be wrong if predict_with_generate is enabled
+            predict_results.metrics.pop("predict_loss", None)
+        trainer.log_metrics("predict", predict_results.metrics)
+        trainer.save_metrics("predict", predict_results.metrics)
+        trainer.save_predictions(predict_results)
 
     # Create model card
     create_modelcard_and_push(trainer, model_args, data_args, training_args, finetuning_args)
