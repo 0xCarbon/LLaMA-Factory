@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 class DistillationLoss(nn.Module):
-    def __init__(self, alpha=0.5):
+    def __init__(self , alpha=0.5):
         """
         Initializes the DistillationLoss module.
         :param temperature: Temperature for softmax scaling, making the teacher's distribution softer.
@@ -42,10 +42,9 @@ class DistillationLoss(nn.Module):
         super().__init__()
         self.alpha = alpha
         self.soft_loss = nn.KLDivLoss(reduction='batchmean')
-        self.hard_loss = nn.CrossEntropyLoss()
         self.temperature = 1 #Adjust this later
 
-    def forward(self, model_logits, ref_logits, labels):
+    def forward(self, model_logits, ref_logits, labels, hard_loss_value):
         """
         Forward pass for the distillation loss computation.
         :param student_logits: Logits from the student model.
@@ -60,14 +59,9 @@ class DistillationLoss(nn.Module):
         
         # Calculate the soft loss (KL divergence loss)
         soft_loss = self.soft_loss(soft_logits, soft_targets) * (self.alpha * self.temperature ** 2)
+
+        hard_loss = hard_loss_value
         
-        print("Model_logits dimension: ",model_logits.dim())
-        print("labels dimension: ",model_logits.dim())
-        print("labels content:\n",labels)
-
-        # Calculate the hard loss (cross entropy loss)
-        hard_loss = self.hard_loss(model_logits, labels) * (1.0 - self.alpha) #labels RuntimeError: Expected target size [1, 32000], got [1, 296]
-
         # Return the total loss as a weighted sum of the soft and hard losses
         return soft_loss + hard_loss
 
@@ -229,32 +223,48 @@ class CustomDistillTrainer(Seq2SeqTrainer):
             writer.write("\n".join(res))
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        # if self.label_smoother is not None and "labels" in inputs:
-        #     labels = inputs.pop("labels")
-        # else:
-        #     labels = None
 
-        labels = inputs.pop("labels")
+        """
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
 
+        Subclass and override for custom behavior.
+        """
+        if self.label_smoother is not None and "labels" in inputs:
+            labels = inputs.pop("labels")
+        else:
+            labels = None
+        model_outputs = model(**inputs)
+        # Save past state if it exists
+        # TODO: this needs to be fixed and made cleaner later.
+        if self.args.past_index >= 0:
+            self._past = model_outputs[self.args.past_index]
 
-        model_outputs: "torch.Tensor" = model(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            return_dict=True,
-            use_cache=False,
-        )
+        if labels is not None:
+            unwrapped_model = unwrap_model(model)
+            if _is_peft_model(unwrapped_model):
+                model_name = unwrapped_model.base_model.model._get_name()
+            else:
+                model_name = unwrapped_model._get_name()
+            if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+                hard_loss = self.label_smoother(model_outputs, labels, shift_labels=True)
+            else:
+                hard_loss = self.label_smoother(model_outputs, labels)
+        else:
+            if isinstance(model_outputs, dict) and "loss" not in model_outputs:
+                raise ValueError(
+                    "The model did not return a loss from the inputs, only the following keys: "
+                    f"{','.join(model_outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+                )
+            # We don't use .loss here since the model may return tuples instead of ModelOutput.
+            hard_loss = model_outputs["loss"] if isinstance(model_outputs, dict) else model_outputs[0]
 
-        model_logits = model_outputs.logits.to(torch.float32)
+        model_logits = model_outputs["logits"] if isinstance(model_outputs, dict) else model_outputs[1]
 
         with torch.no_grad():
-            ref_logits: "torch.Tensor" = self.ref_model(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                return_dict=True,
-                use_cache=False,
-            ).logits.to(torch.float32)
+            ref_outputs = self.ref_model(**inputs)
+            ref_logits = ref_outputs["logits"] if isinstance(ref_outputs, dict) else ref_outputs[1]
 
         loss_fn = DistillationLoss(self.finetuning_args.distill_teacher_mixin) 
-        loss = loss_fn(model_logits, ref_logits, labels)
+        loss = loss_fn(model_logits, ref_logits, labels, hard_loss_value = hard_loss)
 
         return (loss, model_outputs) if return_outputs else loss
