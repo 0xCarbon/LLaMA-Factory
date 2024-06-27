@@ -268,13 +268,51 @@ class CustomDistillTrainer(Seq2SeqTrainer):
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             hard_loss = model_outputs["loss"] if isinstance(model_outputs, dict) else model_outputs[0]
 
+        """
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+
+        Subclass and override for custom behavior.
+        """
+        if self.label_smoother is not None and "labels" in inputs:
+            labels = inputs.pop("labels")
+        else:
+            labels = None
+        model_outputs = model(**inputs)
+        # Save past state if it exists
+        # TODO: this needs to be fixed and made cleaner later.
+        if self.args.past_index >= 0:
+            self._past = model_outputs[self.args.past_index]
+
+        if labels is not None:
+            unwrapped_model = unwrap_model(model)
+            if _is_peft_model(unwrapped_model):
+                model_name = unwrapped_model.base_model.model._get_name()
+            else:
+                model_name = unwrapped_model._get_name()
+            if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+                hard_loss = self.label_smoother(model_outputs, labels, shift_labels=True)
+            else:
+                hard_loss = self.label_smoother(model_outputs, labels)
+        else:
+            if isinstance(model_outputs, dict) and "loss" not in model_outputs:
+                raise ValueError(
+                    "The model did not return a loss from the inputs, only the following keys: "
+                    f"{','.join(model_outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+                )
+            # We don't use .loss here since the model may return tuples instead of ModelOutput.
+            hard_loss = model_outputs["loss"] if isinstance(model_outputs, dict) else model_outputs[0]
+
+        model_logits = model_outputs["logits"] if isinstance(model_outputs, dict) else model_outputs[1]
         model_logits = model_outputs["logits"] if isinstance(model_outputs, dict) else model_outputs[1]
 
         with torch.no_grad():
             ref_outputs = self.ref_model(**inputs)
             ref_logits = ref_outputs["logits"] if isinstance(ref_outputs, dict) else ref_outputs[1]
+            ref_outputs = self.ref_model(**inputs)
+            ref_logits = ref_outputs["logits"] if isinstance(ref_outputs, dict) else ref_outputs[1]
 
         loss_fn = DistillationLoss(self.finetuning_args.distill_teacher_mixin) 
+        loss = loss_fn(model_logits, ref_logits, labels, hard_loss_value = hard_loss)
         loss = loss_fn(model_logits, ref_logits, labels, hard_loss_value = hard_loss)
 
         return (loss, model_outputs) if return_outputs else loss
