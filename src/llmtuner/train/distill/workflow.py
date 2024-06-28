@@ -33,6 +33,9 @@ def run_distill(
     dataset = get_dataset(tokenizer, model_args, data_args, training_args, stage="sft") # load the dataset in sft format
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
 
+    print(dataset[0])
+
+
     if training_args.predict_with_generate:
         tokenizer.padding_side = "left"  # use left-padding in generation
 
