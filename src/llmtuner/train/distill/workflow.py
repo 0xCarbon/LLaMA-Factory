@@ -31,9 +31,13 @@ def run_distill(
 ):
     tokenizer = load_tokenizer(model_args)
     dataset = get_dataset(tokenizer, model_args, data_args, training_args, stage="sft") # load the dataset in sft format
+    # print("Before: ", dataset)
+    dataset = dataset.filter(lambda example: len(example["input_ids"])<= data_args.cutoff_len)
+    # print("After: ",dataset)
+    # return
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
 
-    print(dataset[0])
+    # print(dataset[0])
 
 
     if training_args.predict_with_generate:
