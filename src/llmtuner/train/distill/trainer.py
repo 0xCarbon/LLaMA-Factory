@@ -101,6 +101,8 @@ class DistillationLoss(nn.Module):
         hard_loss = (1 - self.alpha) * hard_loss_value
         
         # Return the total loss as a weighted sum of the soft and hard losses
+        with open("loss_output.txt", "a") as text_file:
+            text_file.write(f"CrossEntropy: {hard_loss_value}; rKLD: {soft_loss/(self.alpha * self.temperature ** 2)}\n")
         logger.info(f"CrossEntropy: {hard_loss_value}; rKLD: {soft_loss/(self.alpha * self.temperature ** 2)}")
         # logger.info(f"CrossEntropy: {hard_loss_value}; rJSD: {soft_loss/(self.alpha * self.temperature ** 2)}")
         return soft_loss + hard_loss
