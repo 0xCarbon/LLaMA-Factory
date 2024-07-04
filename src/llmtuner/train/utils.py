@@ -87,7 +87,6 @@ def create_ref_model(
                 model_name_or_path=finetuning_args.ref_model,
                 adapter_name_or_path=finetuning_args.ref_model_adapters,
                 quantization_bit=finetuning_args.ref_model_quantization_bit,
-                quantization_device_map = "auto",
             )
         )
         ref_model_args = ModelArguments(**ref_model_args_dict)
