@@ -5,6 +5,7 @@ from ..extras.logging import get_logger
 from .formatter import EmptyFormatter, FunctionFormatter, StringFormatter, ToolFormatter
 from .utils import Role, infer_max_len
 
+import json
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizer
@@ -194,6 +195,73 @@ class Llama2Template(Template):
 
         return self._make_pairs(encoded_messages, cutoff_len, reserved_label_len)
 
+@dataclass
+class MistralNemoTemplate(Template):
+    def _encode(
+        self,
+        tokenizer: "PreTrainedTokenizer",
+        messages: List[Dict[str, str]],
+        system: str,
+        tools: str, #SHOULD BE LIST OF from transformers.utils import get_json_schema OF A FUNCTION
+        cutoff_len: int,
+        reserved_label_len: int,
+    ) -> Sequence[Tuple[List[int], List[int]]]:
+        r"""
+        Encodes formatted inputs to pairs of token ids.
+        Turn 0: system + query        resp
+        Turn t: sep + query           resp
+        """
+        system = system or self.default_system
+        encoded_messages = []
+
+        user_messages = [message["content"] for i,message in enumerate(messages) if message["role"] == Role.USER.value]
+        for i, message in enumerate(messages):
+            elements = []
+            if i==0:
+                elements += StringFormatter(slots=[{"bos_token"}]).apply()
+
+            if message["role"] == Role.USER.value:
+                if message["content"] == user_messages[-1]:
+                    elements+="[AVAILABLE_TOOLS]["
+                    tool_text = self.format_tools.apply(content=tools)[0] if tools else ""
+                    elements+=tool_text
+                    elements+="[/AVAILABLE_TOOLS]"
+                    system_text = self.format_system.apply(content=system)[0]
+                    elements += self.format_user.apply(content=system_text + message["content"])
+                else:
+                    elements += self.format_user.apply(content=message["content"])
+            elif message["role"] == Role.ASSISTANT.value:
+                elements += self.format_assistant.apply(content=message["content"])
+                elements += self.format_separator.apply()
+            elif message["role"] == Role.FUNCTION.value:
+                tool_calls = json.loads(message["content"]) # should be list of dict json with keys "function" and "id"
+                elements+="[AVAILABLE_TOOLS]["
+                for tool_call in tool_calls:
+                    out = tool_call["function"] 
+                    elements+=out[:-1]
+
+                    if not tool_call["id"] or len(tool_call["id"])!= 9:
+                        raise Exception("Tool call IDs should be alphanumeric strings with length 9!")
+                    
+                    elements+=', \"id\": \"' + tool_call["id"] + '\"}'
+                    elements+=", "
+                elements+="]"
+            elif message["role"] == Role.OBSERVATION.value:
+                tool_results = json.loads(message["content"]) # should be list of dict json with keys "result" and "id"
+                for tool_result in tool_results:
+                    elements+='[TOOL_RESULTS]{\"content\": ' + tool_result["result"]  + ", "
+
+                    if not tool_result["id"] or len(tool_result["id"])!= 9:
+                        raise Exception("Tool call IDs should be alphanumeric strings with length 9!")
+                    
+                    elements+='\"call_id\": \"' + tool_result["id"] + '\"}[/TOOL_RESULTS]'
+            else:
+                raise NotImplementedError("Unexpected role: {}".format(message["role"]))
+
+            encoded_messages.append(self._convert_elements_to_ids(tokenizer, elements))
+
+        return self._make_pairs(encoded_messages, cutoff_len, reserved_label_len)
+
 
 templates: Dict[str, Template] = {}
 
@@ -240,7 +308,12 @@ def _register_template(
     ```
     """
     eos_slots = [] if efficient_eos else [{"eos_token"}]
-    template_class = Llama2Template if name.startswith("llama2") else Template
+    if name.startswith("llama2"):
+        template_class = Llama2Template 
+    elif name == "mistral_nemo":
+        template_class = MistralNemoTemplate 
+    else:
+        template_class = Template
     default_user_formatter = StringFormatter(slots=["{{content}}"])
     default_assistant_formatter = StringFormatter(slots=["{{content}}"] + eos_slots)
     default_function_formatter = FunctionFormatter(slots=["Action: {{name}}\nAction Input: {{arguments}}"] + eos_slots)
@@ -642,6 +715,14 @@ _register_template(
     force_system=True,
 )
 
+_register_template(
+    name="mistral_nemo",
+    format_user=StringFormatter(slots=["[INST] {{content}} [/INST]"]),
+    format_system=StringFormatter(slots=["{{content}}\n\n"]),
+    format_tools=ToolFormatter(tool_format="mistral_nemo"),
+    format_separator=StringFormatter(slots=[{"eos_token"}]),
+    format_assistant=StringFormatter(slots=["{{content}}"]),
+)
 
 _register_template(
     name="olmo",
