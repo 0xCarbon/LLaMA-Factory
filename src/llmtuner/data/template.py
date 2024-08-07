@@ -218,7 +218,7 @@ class MistralNemoTemplate(Template):
         for i, message in enumerate(messages):
             elements = []
             if i==0:
-                elements += StringFormatter(slots=[{"bos_token"}]).apply()
+                elements += EmptyFormatter(slots=[{"bos_token"}]).apply()
 
             if message["role"] == Role.USER.value:
                 if message["content"] == user_messages[-1]:
@@ -263,7 +263,7 @@ class MistralNemoTemplate(Template):
         return self._make_pairs(encoded_messages, cutoff_len, reserved_label_len)
 
 
-templates: Dict[str, Template] = {}
+TEMPLATES: Dict[str, Template] = {}
 
 
 def _register_template(
@@ -316,10 +316,10 @@ def _register_template(
         template_class = Template
     default_user_formatter = StringFormatter(slots=["{{content}}"])
     default_assistant_formatter = StringFormatter(slots=["{{content}}"] + eos_slots)
-    default_function_formatter = FunctionFormatter(slots=["Action: {{name}}\nAction Input: {{arguments}}"] + eos_slots)
+    default_function_formatter = FunctionFormatter(slots=eos_slots, tool_format="default")
     default_tool_formatter = ToolFormatter(tool_format="default")
     default_separator_formatter = EmptyFormatter()
-    templates[name] = template_class(
+    TEMPLATES[name] = template_class(
         format_user=format_user or default_user_formatter,
         format_assistant=format_assistant or default_assistant_formatter,
         format_system=format_system or default_user_formatter,
@@ -416,9 +416,9 @@ def get_template_and_fix_tokenizer(
     name: Optional[str] = None,
 ) -> Template:
     if name is None:
-        template = templates["vanilla"]  # placeholder
+        template = TEMPLATES["vanilla"]  # placeholder
     else:
-        template = templates.get(name, None)
+        template = TEMPLATES.get(name, None)
         if template is None:
             raise ValueError("Template {} does not exist.".format(name))
 
@@ -541,33 +541,13 @@ _register_template(
     format_user=StringFormatter(slots=[{"token": "<|user|>"}, "\n", "{{content}}", {"token": "<|assistant|>"}]),
     format_assistant=StringFormatter(slots=["\n", "{{content}}"]),
     format_system=StringFormatter(slots=[{"token": "[gMASK]"}, {"token": "sop"}, "{{content}}"]),
-    format_function=FunctionFormatter(slots=["{{name}}\n{{arguments}}"]),
+    format_function=FunctionFormatter(slots=[], tool_format="glm4"),
     format_observation=StringFormatter(
         slots=[{"token": "<|observation|>"}, "\n", "{{content}}", {"token": "<|assistant|>"}]
     ),
     stop_words=["<|user|>", "<|observation|>"],
     efficient_eos=True,
     force_system=True,
-)
-
-
-_register_template(
-    name="chatglm3_system",
-    format_user=StringFormatter(slots=[{"token": "<|user|>"}, "\n", "{{content}}", {"token": "<|assistant|>"}]),
-    format_assistant=StringFormatter(slots=["\n", "{{content}}"]),
-    format_system=StringFormatter(
-        slots=[{"token": "[gMASK]"}, {"token": "sop"}, {"token": "<|system|>"}, "\n", "{{content}}"]
-    ),
-    format_function=FunctionFormatter(slots=["{{name}}\n{{arguments}}"]),
-    format_observation=StringFormatter(
-        slots=[{"token": "<|observation|>"}, "\n", "{{content}}", {"token": "<|assistant|>"}]
-    ),
-    default_system=(
-        "You are ChatGLM3, a large language model trained by Zhipu.AI. "
-        "Follow the user's instructions carefully. Respond using markdown."
-    ),
-    stop_words=["<|user|>", "<|observation|>"],
-    efficient_eos=True,
 )
 
 
@@ -720,7 +700,7 @@ _register_template(
     format_user=StringFormatter(slots=["[INST] {{content}} [/INST]"]),
     format_system=StringFormatter(slots=["{{content}}\n\n"]),
     format_tools=ToolFormatter(tool_format="mistral_nemo"),
-    format_separator=StringFormatter(slots=[{"eos_token"}]),
+    format_separator=EmptyFormatter(slots=[{"eos_token"}]),
     format_assistant=StringFormatter(slots=["{{content}}"]),
 )
 

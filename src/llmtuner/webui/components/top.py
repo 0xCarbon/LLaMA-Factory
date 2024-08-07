@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Dict
 
 import gradio as gr
 
-from ...data import templates
+from ...data import TEMPLATES
 from ...extras.constants import METHODS, SUPPORTED_MODELS
 from ..common import get_model_path, get_template, list_adapters, save_config
 from ..utils import can_quantize
